@@ -171,6 +171,8 @@ function renderDashboard(){
 function renderLesson(){
   const lesson = BOOK.lessons.find(l=>l.id===currentLessonId);
   const el = document.getElementById("lessonView");
+  const feedbackEl = document.getElementById("exerciseOutput");
+  const currentFeedback = feedbackEl ? feedbackEl.textContent : "";
   const attempts = state.exerciseAttempts[lesson.id] || 0;
   const hintsUsed = state.hintUsage[lesson.id] || 0;
   const supported = supportModeMessage();
@@ -225,7 +227,8 @@ function renderLesson(){
                 <button class="btn" id="resetExerciseBtn">Reset</button>
                 <button class="btn gold" id="completeLessonBtn">Mark lesson complete</button>
               </div>
-              <pre class="console" id="exerciseOutput">Feedback will appear here.</pre>
+              <pre class="console" id="exerciseRunOutput">Code output will appear here.</pre>
+              <pre class="console" id="exerciseOutput" style="margin-top:10px">Feedback will appear here.</pre>
               <div class="small" style="margin-top:8px">Attempts: ${attempts} · Hints used: ${hintsUsed}</div>
             </div>
 
@@ -276,6 +279,9 @@ function renderLesson(){
   renderVisual(`visual-${lesson.id}`, lesson.visual);
   bindLessonEvents(lesson);
   renderHints(lesson);
+  if (currentFeedback && currentFeedback !== "Feedback will appear here.") {
+    document.getElementById("exerciseOutput").textContent = currentFeedback;
+  }
 }
 
 function supportModeMessage(){
@@ -292,12 +298,12 @@ function bindLessonEvents(lesson){
   const codeArea = document.getElementById("codeExample");
   const exArea = document.getElementById("exerciseCode");
   document.getElementById("runCodeBtn").onclick = ()=>runPython(codeArea.value, "codeOutput");
-  document.getElementById("runExerciseBtn").onclick = ()=>runPython(exArea.value, "exerciseOutput");
+  document.getElementById("runExerciseBtn").onclick = ()=>runPython(exArea.value, "exerciseRunOutput");
   document.getElementById("resetCodeBtn").onclick = ()=>{ codeArea.value = lesson.code; };
-  document.getElementById("resetExerciseBtn").onclick = ()=>{ exArea.value = lesson.exercise.starter || ""; };
+  document.getElementById("resetExerciseBtn").onclick = ()=>{ exArea.value = lesson.exercise.starter || ""; document.getElementById("exerciseRunOutput").textContent = "Code output will appear here."; document.getElementById("exerciseOutput").textContent = "Feedback will appear here."; };
   document.getElementById("copyCodeBtn").onclick = async ()=>{ await navigator.clipboard.writeText(lesson.code); };
   document.getElementById("loadPyBtn").onclick = initPyodide;
-  document.getElementById("checkExerciseBtn").onclick = ()=>checkExercise(lesson);
+  document.getElementById("checkExerciseBtn").onclick = async () => { try { await checkExercise(lesson); } catch(e) { console.error("Check exercise error:", e); document.getElementById("exerciseOutput").textContent = "Error checking exercise: " + e.message; } };
   document.getElementById("showHintBtn").onclick = ()=>revealHint(lesson);
   document.getElementById("stuckModeBtn").onclick = ()=>showStuckMode(lesson);
   document.getElementById("completeLessonBtn").onclick = ()=>completeLesson(lesson, true);
@@ -347,23 +353,49 @@ async function runPython(code, outputId){
   }
 }
 
-function checkExercise(lesson){
+async function runPythonForCheck(code){
+  if(!pyReady) throw new Error("Python runtime not loaded");
+  let output = "";
+  try{
+    pyodide.setStdout({ batched: (msg) => output += msg + "\n" });
+    pyodide.setStderr({ batched: (msg) => output += msg + "\n" });
+    await pyodide.runPythonAsync(code);
+    return output.trim() || "Code executed with no printed output.";
+  }catch(err){
+    throw err;
+  }
+}
+
+async function checkExercise(lesson){
+  console.log("Checking exercise for " + lesson.id);
   const code = document.getElementById("exerciseCode").value;
   const tests = lesson.exercise.tests || [];
   state.exerciseAttempts[lesson.id] = (state.exerciseAttempts[lesson.id] || 0) + 1;
   let score = 0;
   let messages = [];
+  let output = null;
+
+  // Check for output-based tests
+  const hasOutputTests = tests.some(t => t.type === "output_contains");
+  if(hasOutputTests){
+    try{
+      output = await runPythonForCheck(code);
+    }catch(e){
+      messages.push("• Code execution failed: " + e.message);
+    }
+  }
+
   tests.forEach(t=>{
     if(t.type === "contains" && code.includes(t.value)){ score++; messages.push(`✓ contains ${t.value}`); }
     else if(t.type === "not_contains" && !code.includes(t.value)){ score++; messages.push(`✓ avoids ${t.value}`); }
     else if(t.type === "regex" && new RegExp(t.value, "s").test(code)){ score++; messages.push(`✓ structure matched`); }
     else if(t.type === "contains_any" && t.values.some(v=>code.includes(v))){ score++; messages.push(`✓ contains one expected answer`); }
+    else if(t.type === "output_contains" && output && output.includes(t.value)){ score++; messages.push(`✓ output contains ${t.value}`); }
     else messages.push(`• check not yet satisfied`);
   });
   const pct = tests.length ? score / tests.length : 1;
   state.lessonScores[lesson.id] = Math.max(state.lessonScores[lesson.id] || 0, pct);
   let msg = `Result: ${Math.round(pct*100)}% checks passed.\n` + messages.join("\n") + `\n\n${lesson.exercise.feedback}`;
-  const out = document.getElementById("exerciseOutput");
   if(pct === 1){
     msg += `\n\nExcellent. You earned ${xpForLesson(lesson)} XP.`;
     completeLesson(lesson, false);
@@ -375,11 +407,11 @@ function checkExercise(lesson){
     msg += `\n\nNot correct yet. Use a progressive hint or Stuck Mode, then retry with one small change.`;
     adjustDifficulty("struggle");
   }
+  const out = document.getElementById("exerciseOutput");
   out.textContent = msg;
   saveState();
   updateTopStats();
   renderSidebar(document.getElementById("searchInput").value.trim());
-  renderLesson();
 }
 
 function completeLesson(lesson, manual){
@@ -796,3 +828,4 @@ function renderAll(){
 bindTopActions();
 renderAll();
 showView("dashboardView");
+initPyodide();
