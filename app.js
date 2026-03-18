@@ -173,6 +173,8 @@ function renderLesson(){
   const el = document.getElementById("lessonView");
   const feedbackEl = document.getElementById("exerciseOutput");
   const currentFeedback = feedbackEl ? feedbackEl.textContent : "";
+  const codeExampleValue = document.getElementById("codeExample")?.value || lesson.code;
+  const exerciseCodeValue = document.getElementById("exerciseCode")?.value || (lesson.exercise.starter || "");
   const attempts = state.exerciseAttempts[lesson.id] || 0;
   const hintsUsed = state.hintUsage[lesson.id] || 0;
   const supported = supportModeMessage();
@@ -279,6 +281,8 @@ function renderLesson(){
   renderVisual(`visual-${lesson.id}`, lesson.visual);
   bindLessonEvents(lesson);
   renderHints(lesson);
+  document.getElementById("codeExample").value = codeExampleValue;
+  document.getElementById("exerciseCode").value = exerciseCodeValue;
   if (currentFeedback && currentFeedback !== "Feedback will appear here.") {
     document.getElementById("exerciseOutput").textContent = currentFeedback;
   }
